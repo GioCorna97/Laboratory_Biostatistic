@@ -1,0 +1,885 @@
+---
+title: "Progetto Biostatistica"
+author: "Mirco Durante 829408, Giovanni Cornacchia 830631"
+date: '2022-09-13'
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+---
+
+## Introduzione 
+Per il progetto di Laboratorio per la Biostatistica il nostro obiettivo è stato quello di partire da un dataset
+contenente errori e ripurirlo da essi attraverso la procedura di cleaning. Una volta effettuato questo passaggio
+abbiamo cercato di dare qualche informazione sulle variabili e provato a svolgere un'analisi preliminare di sopravvivenza.
+
+## Dataset 
+Il dataset è denominato SOFA. 
+Il punteggio SOFA valuta la disfunzione d'organo, in letteratura è noto, come un incremento del punteggio, aumenti il rischio di mortalità.
+
+Le variabili di cui si compone il set di dati in questione sono le seguenti:
+
+1. **PAZIENTE**: *numeric*,numero identificativo del paziente 
+2. **NASCITA**: *character*,data di nascita del paziente 
+3. **SEX**: *numeric*,sesso del paziente
+4. **STATCIV**: *numeric*,stato civile del paziente 
+5. **PESO**: *numeric*,peso del paziente arrotondato in kg
+6. **ALTEZ**: *numeric*,altezza del paziente in cm
+7. **CADUTE**: *numeric*,numero di cadute del paziente
+8. **CCSCORE**: *numeric*,Charlson comorbidity index 
+9. **SOFAING**: *numeric*, punteggio Sofa
+9. **MMSE**: *character*, Mini-Mental State Examination
+10. **ALB**: *character*,valore di albumina
+11. **CALC**: *character*,valore di calcio
+12. **VITD**: *character*,valore di vitamina D
+13. **HBING**: *character*,valore dell'emoglobina
+14. **TEMPRIC**: *numeric*,tempo di ricovero in minuti
+15. **DATDIM**: *POSIXct*,data della dimissione del paziente dall'ospedale
+16. **DATINT**: *POSIXct*,data dell'intervento 
+17. **INTDURAT**: *numeric*,durata dell'intervento in minuti
+18. **ANEST**: *numeric*,tipo di anestesia utilizzata
+19. **DATA DECESSO**: *character*,data decesso del paziente
+
+
+## Librerie e Funzioni
+```{r, message=FALSE, warning=FALSE}
+
+library(readxl)
+#install.packages("stringr")  
+library("stringr")
+require(lubridate)
+#install.packages("visdat")  
+library(MASS)
+library(visdat)
+library(lattice)
+library(ggplot2)
+library(ggrepel)
+library(survival)
+library(ggsurvey)
+library(DataExplorer)
+library(RColorBrewer)
+library(ggplot2)
+library(ggfortify)
+library(plotly)
+library(survminer)
+#install.packages("epitools")
+library(epitools)
+library(ggfortify)
+library(MatchIt)
+library(table1)
+library('psych')
+library(ggcorrplot)
+library(MatchIt)
+library(table1)
+#install.packages("DataExplorer")
+library(DataExplorer)
+library(RColorBrewer)
+library(ggplot2)
+library(ggfortify)
+library(plotly)
+library(survminer)
+library(ggfortify)
+library(rms)
+#install.packages("vioplot")
+library("vioplot")
+
+## funzione per accentrare il titolo 
+custom_theme <- function() {
+  theme_survminer() %+replace%
+    theme(
+      plot.title=element_text(hjust=0.5)
+    )
+}
+```
+
+
+
+# Data Acquisition
+```{r, warning=FALSE}
+setwd("C:/Users/Mirco/Desktop/Uni/Biostatistica/Laboratorio R per la Biostatistica")
+SOFA <- read_excel("SOFA.xlsx")
+#View(SOFA)
+```
+
+
+# Data Esploration 
+Andiamo ad osservare tutte le variabili presenti nel dataset e le relative classi.
+
+```{r}
+str(SOFA)
+```
+
+
+# Data Cleaning
+Nella fase di data cleaning andremo ad osservare per ogni variabile se vi siano delle incongruenze nei valori e cercheremo di risolvere questi problemi
+rendendo così il dataset più pulito per le fasi di analisi successive.
+
+## PAZIENTE
+Controlliamo che non vi siano dublicati nei pazienti. 
+
+
+```{r}
+SOFA$PAZIENTE[duplicated(SOFA$PAZIENTE)]
+SOFA[SOFA$PAZIENTE== 16,] 
+```
+
+Il valore id 16 si ripete 2 volte. Osservando che le variabili riferite ai due pazienti sono diverse tra loro ad eccezione della data di nascita, possiamo affermare
+che i due siano due persone diverse. Trattiamo questo errore cambiando il codice identificativo di uno dei due pazienti con un numero che non è presente nella lista,
+in modo tale da non perdere l'informazione.
+
+Assegnamo al secondo paziente con id 16 posto in riga 7, il valore 17.
+```{r}
+SOFA[7,1] = 17
+SOFA[7,1]
+```
+
+```{r}
+SOFA[SOFA$PAZIENTE==16 | SOFA$PAZIENTE==17,]
+```
+
+
+## NASCITE
+
+Osservando le date di nascita dei vari pazienti troviamo molti problemi. Dapprima si nota come le date non siano in formato classico dd/mm/yyyy ma sono numeri interi classificati come carattere.
+Notiamo inoltre 3 dati diversi rispetto agli altri. 2 sono in formato dd/mm/yyyy ma non sono stati convertiti in numero e ad 1 manca uno '/' che separa i mesi dagli anni.
+Andando con ordine, modifichiamo il dato relativo al paziente 111 aggiungendo uno '/' che separa mesi da anni.
+ 
+ 
+```{r, results='hide'}
+(i1 <- SOFA[SOFA$PAZIENTE==111,])
+SOFA$NASCITA[SOFA$PAZIENTE==111]=sapply(Map(append, strsplit(i1$NASCITA,""), after = nchar(i1$NASCITA) - 4, "/"), paste, collapse = "")
+SOFA[SOFA$PAZIENTE==111,]
+```
+
+
+Andiamo poi ad evidenziare le date che hanno un formato differente rispetto alle altre: 
+
+```{r}
+SOFA$NASCITA[c(43, 61, 34)]
+```
+
+transformiamo i numeri in date consideranto come data di origine il 1899-12-30
+
+```{r, warning=FALSE}
+SOFA_1 = SOFA
+SOFA_1$NASCITA = as.numeric(SOFA$NASCITA)
+(SOFA_1$NASCITA = as.Date(x = SOFA_1$NASCITA,origin = "1899-12-30", ))
+```
+
+Nelle celle relative alle date diverse evidenziate prima, vengono posti di default degli NA.
+Possiamo dunque sostituire i valori nulli con le 3 date modificate. 
+
+Ponendo l'attenzione sulle date con anni 1822 e 1829 e osservando le date di intervento, ci sembra improbabile che esse siano corrette. Pensiamo dunque
+che ci sia stato un errore di battitura nella compilazione del dataset. A questo proposito ci sembra più ragionevole modificare gli anni ponendo 1922 e 1929.
+
+
+```{r}
+SOFA_1$NASCITA[c(43, 61, 34)] = as.Date(c("1928/03/16","1922/07/04","1929/07/13"))
+```
+
+
+## SEX
+Per la variabile SEX relativa alla differenza di genere non troviamo problemi ne valori missing. Creiamo una variabile denominata sex_lev
+rinominando i fattori in 'uomo' quando sex=1 e 'donna' quando sex=2.
+
+```{r, warning=FALSE}
+#sex
+
+SOFA_1$SEX = as.factor(SOFA_1$SEX)
+SOFA_1$sex_lev[SOFA_1$SEX== 1]='uomo'
+SOFA_1$sex_lev[SOFA_1$SEX== 2]='donna'
+#View(SOFA_1)
+```
+
+## STATCIV
+
+Lo Stato civile del paziente non trova errori ne missing. Creiamo una nuova variabile "STATCIV_LEV" con le varie classi. 
+
+```{r, warning=FALSE}
+#STATCIV
+SOFA_1$STATCIV = as.factor(SOFA_1$STATCIV)
+
+SOFA_1$STATCIV_lev[SOFA_1$STATCIV== 1]='non sposato'
+SOFA_1$STATCIV_lev[SOFA_1$STATCIV== 2]='congiunto/a'
+SOFA_1$STATCIV_lev[SOFA_1$STATCIV== 3]='convivente'
+SOFA_1$STATCIV_lev[SOFA_1$STATCIV== 4]='separato/a'
+SOFA_1$STATCIV_lev[SOFA_1$STATCIV== 5]='vedovo/a'
+```
+
+
+## PESO
+```{r}
+SOFA_1$PESO
+```
+Il peso presenta dei valori errati pari a -1 che in fase di analisi potrebbero creare problemi. 
+Inoltre vi è un paziente con un peso di 33 kg. Per questo dato possiamo fare una piccola analisi individuando se sia un potenziale outlier attraverso un boxplot.
+
+
+```{r}
+SOFA_1[SOFA_1$PESO==33,]
+```
+
+
+### boxplot peso 
+```{r}
+p = boxplot(SOFA_1$PESO, ylab = 'Peso')
+boxplot.stats(SOFA_1$PESO)$out
+```
+Dal grafico si evidenzano 2 outlier (nello stesso punto -1), siamo quindi propensi a mantenere il dato di peso 33.
+
+Sostituiamo quindi i valori negativi con NA. 
+
+```{r}
+SOFA_1$PESO =ifelse(SOFA_1$PESO==-1,NA,SOFA_1$PESO)
+SOFA_1$PESO
+```
+
+```{r}
+min(na.omit(SOFA_1$PESO))
+max(na.omit(SOFA_1$PESO))
+```
+Facendo un rapido controllo possiamo notare come il valore minimo sia 33 e il massimo 95 e non ci siano altri problemi.
+
+## ALTEZZA
+
+Nelle altezze troviamo anche qui qualche incongruenza.
+
+```{r}
+SOFA_1$ALTEZ
+min(na.omit(SOFA_1$ALTEZ))
+max(na.omit(SOFA_1$ALTEZ))
+```
+Osservando valori minimi e massimo, escludendo gli NA troviamo valori minimi anomali.
+Cerchiamo inoltri altri potenziali outlier.
+
+```{r}
+p = boxplot(SOFA_1$ALTEZ, ylab = 'Altezza')
+boxplot.stats(SOFA_1$ALTEZ)$out
+```
+Ci vengono identificati come possibili outlier i 2 valori negativi che andremo a sostituire con valori missing.
+
+```{r}
+SOFA_1$ALTEZ = ifelse(SOFA_1$ALTEZ< 100,NA,SOFA_1$ALTEZ) 
+SOFA_1$ALTEZ
+```
+
+## CADUTE 
+
+La variabile CADUTE indica il **numero di cadute** registrate per ogni paziente.
+
+```{r}
+max(SOFA_1$CADUTE)
+min(SOFA_1$CADUTE)
+SOFA_1$CADUTE = ifelse(SOFA_1$CADUTE<0,NA,SOFA_1$CADUTE)
+min(SOFA_1$CADUTE)
+```
+Dato il valore minimo della variabile -1,non realizzabile per una varibile che spiega il numero di cadute registrate, poniamo il dato come valore missing.
+
+
+## CCSCORE
+
+**Charlson comorbidity index** è un punteggio che viente attribuito ad ogni paziente in base alle comorbidità in esso presenti. 
+Si determinano 7 livelli, dal punteggio più basso 0 a quello più alto 6.
+
+```{r}
+SOFA_1$CCSCORE = as.factor(SOFA_1$CCSCORE)
+table(SOFA_1$CCSCORE)
+```
+
+Quello che possiamo fare per rendere più leggibile il nostro dataset è quello di creare una nuova variabile indicando la classe del punteggio ccscore.
+Abbiamo optato per dividere in 3 livelli il punteggio.
+
+* ccscore = 0,1,2 --> ccscore basso
+
+* ccscore = 3,4   --> ccscore medio
+
+* ccscore = 5,6   --> ccscore alto
+
+```{r}
+SOFA_1$CCSCORE<-as.numeric(SOFA_1$CCSCORE)
+SOFA_1$CCSCORE_cla = ifelse((SOFA_1$CCSCORE==0 |SOFA_1$CCSCORE==1 |SOFA_1$CCSCORE==2),'ccscore basso', 
+                        ifelse((SOFA_1$CCSCORE==3|SOFA_1$CCSCORE==4),'ccscore medio','ccscore alto'))
+(table(SOFA_1$CCSCORE_cla))
+```
+
+## SOFAING
+
+La variabili SOFAING indica il punteggio SOFA, che come abbiamo anticipato, valuta la **disfunzione d'organo**. In questo caso viene classificato su 5 livelli, dal punteggio più basso 0 a quello più alto 4.
+
+```{r}
+SOFA_1$SOFAING = as.factor(SOFA_1$SOFAING)
+table(SOFA_1$SOFAING)
+```
+
+Anche per questa variabile abbiamo creato delle classi dividendo in:
+
+* sofaing = 0 --> sofa basso
+* sofaing = 1,2,3,4 ---> sofa alto
+
+```{r}
+SOFA_1$sofa_class = ifelse(SOFA_1$SOFAING== '0','Sofa Basso', 'Sofa Alto')
+table(SOFA_1$sofa_class)
+```
+
+## Mini-Mental State Examination (MMSE)
+
+Il MMSE rappresenta un **rapido e sensibile strumento per l'esplorazione della funzione cognitiva e delle sue modificazioni nel tempo**.
+Viene spesso utilizzato come strumento di screening nell'indagine di soggetti con demenza e con sindromi neuropsicologiche di natura differente.
+
+Osserviamo che per alcuni dati viene segnato il valore -1 indicando il dato mancante. Al fine di avere una più corretta interpretazione successiva poniamo questi valori come missing.
+
+```{r}
+SOFA_1$MMSE
+min(na.omit(SOFA_1$MMSE))
+SOFA_1$MMSE = ifelse(SOFA_1$MMSE<0,NA,SOFA_1$MMSE)
+SOFA_1$MMSE
+```
+
+Notamo anche che alcuni valori presentino virgole "," al posto di punti "." quindi R non li riconosce come valori decimali. Sostituiamo dunque con il punto la virgola.
+
+```{r warning=FALSE}
+SOFA_1$MMSE = str_replace(SOFA_1$MMSE, ",", ".")
+SOFA_1$MMSE = as.numeric(SOFA_1$MMSE)
+```
+
+
+## ALB
+
+L'albumina è considerata una delle proteine più importanti dell'organismo ed è contenuta soprattutto nel plasma.
+Nel nostro dataset il valore -1 indica il valore mancante perciò lo sostituiamo come NA.
+Sostituiamo inoltre le virgole con i punti.
+
+```{r}
+SOFA_1$ALB
+SOFA_1$ALB = ifelse(SOFA_1$ALB==-1,NA,SOFA_1$ALB)
+SOFA_1$ALB = str_replace(SOFA_1$ALB, ",", ".")
+SOFA_1$ALB = as.numeric(SOFA_1$ALB)
+SOFA_1$ALB
+```
+
+## CALC
+Il calcio, il minerale più presente all'interno del nostro organismo è essenziale per lo sviluppo e per la salute delle ossa.
+Non avendo valori -1 che stanno ad indicare l'informazione mancante, procediamo a sostituire i punti alle virgole
+
+```{r}
+SOFA_1$CALC
+SOFA_1$CALC = str_replace(SOFA_1$CALC, ",", ".")
+SOFA_1$CALC = as.numeric(SOFA_1$CALC)
+min(SOFA_1$CALC)
+max(SOFA_1$CALC)
+```
+Per la variabile calcio notiamo un valore max molto alto. Probabilmente vi è stato un errore nella registrazione del dato.
+
+```{r}
+p = boxplot(SOFA_1$CALC, ylab = 'Calcio')
+boxplot.stats(SOFA_1$CALC)$out
+```
+Osservando il boxplot infatti il valore 880 è evidentemente un outlier. Mantenendo sempre l'idea di un errore nella trascrizione del dato si pensa che 880 si riferisca a un valore di calcio di 8.8 molto più coerente.
+
+```{r}
+SOFA_1$CALC[23]= SOFA_1$CALC[23]/100
+
+p = boxplot(SOFA_1$CALC, ylab = 'Calcio')
+boxplot.stats(SOFA_1$CALC)$out
+```
+
+
+## VITD
+
+La variabile VITD si riferisce ai livelli di vitamina D. Guardano i dati si osserva la presenza di valori -1 riferiti ai dati mancanti.
+Sostituiamo quindi il -1 con NA e le virgole con i punti permettendo così la classificazione della varibile come numerica.
+
+```{r}
+SOFA_1$VITD
+SOFA_1$VITD = str_replace(SOFA_1$VITD, ",", ".")
+SOFA_1$VITD = ifelse(SOFA_1$VITD==-1,NA,SOFA_1$VITD)
+
+SOFA_1$VITD = as.numeric(SOFA_1$VITD)
+min(na.omit(SOFA_1$VITD))
+max(na.omit(SOFA_1$VITD))
+SOFA_1$VITD
+```
+
+
+```{r}
+p = boxplot(SOFA_1$VITD, ylab = 'Vitamina_D')
+boxplot.stats(SOFA_1$VITD)$out
+```
+Dal boxplot non si evidenziano grosse problematiche a livello di dati, perciò possiamo terminare così la nostra pulizia della variabile.
+
+## HBING
+HBING è la variabile riferita all'emoglobina, una proteina che si trova all'interno dei globuli rossi.
+Analizzando i dati non troviamo valori mancanti o incongruenti.
+La modifica che possiamo apportare è quella del  cambio virgola-punto per permettere la classificazione numerica della variabile.
+```{r}
+SOFA_1$HBING
+SOFA_1$HBING = str_replace(SOFA_1$HBING, ",", ".")
+SOFA_1$HBING = as.numeric(SOFA_1$HBING)
+min(na.omit(SOFA_1$HBING))
+max(na.omit(SOFA_1$HBING))
+
+```
+### boxplot emoglobina 
+```{r}
+p = boxplot(SOFA_1$HBING, ylab = 'Vitamina_D')
+boxplot.stats(SOFA_1$HBING)$out
+
+```
+
+## TEMPRIC
+
+TEMPRIC si riferisce al tempo di ricovero di un paziente in minuti. 
+Nella variabile si evidenziano dei -1 riferiti al valore non disponibile e -2 dato che indica la provenienza del paziente da un altro ospedale.
+Ai fini dell'analisi questi due valori alterano i nostri risultati. Quello che si può fare è indicarli come NA.
+
+```{r}
+s1 = SOFA_1
+s1$TEMPRIC = ifelse(s1$TEMPRIC<0,NA,s1$TEMPRIC)
+min(na.omit(s1$TEMPRIC))
+max(na.omit(s1$TEMPRIC))
+
+```
+### boxplot tempo ricovero 
+```{r}
+bp_tempo = boxplot(s1$TEMPRIC, ylab = 'Tempo ricovero')
+boxplot.stats(s1$TEMPRIC)$out
+```
+
+## DATDIM
+La variabile DATDIM è il riferimento alla data di dimissione del paziente.
+Come possiamo osservare non ci sono date strutturalmente inadatte.
+Anche la classe della variabile è già in formato data.
+
+```{r}
+s1$DATDIM
+class(s1$DATDIM)
+```
+
+## DATAINT
+Stesse osservazioni le possiamo fare per DATAINT che indica la data dell'intervento a cui tutti i pazienti sono stati sottoposti.
+La classe della variabile formato data.
+
+```{r}
+s1$DATINT
+class(s1$DATINT)
+```
+Quello che si può notare però sono delle incongruenze nelle date di dimissione e di intervento.
+L'idea è stata quella di formare un nuovo dataset rinominandolo s4 in cui sono inseriti solo i soggetti la cui data di intervento era prima della data di dimissione.
+Il contrario ovviamente avrebbe portato a delle distorsioni.
+
+```{r}
+s4 = s1
+(table(ifelse((difftime(s1$DATDIM, s1$DATINT, units = "days")>=0),TRUE,FALSE)))
+s4 <- subset(s1, (difftime(s1$DATDIM, s1$DATINT, units = "days")>=0)==TRUE | is.na(s1$DATDIM))
+
+```
+Dalla funzione table risultano 2 pazienti in cui la data di dimissione è precedente a quella dell'intevento.
+Nel dataset s4 questi verranno esclusi.
+Si passa perciò da un dataset con 64 osservazioni a uno con 62.
+
+## ANEST
+
+Indica la **tipologia di anestesia** effettuata al paziente, è una variabile che abbiamo ritenuto opportuno convertirla in fattoriale.
+Abbiamo inoltre creato una nuova variabile da aggiungere al dataset (ANEST_lev) in modo tale da avere un'informazione più specifica ed informativa della variabile.
+
+```{r setup, warning=FALSE}
+s4$ANEST = as.factor(s4$ANEST)
+s4$ANEST_lev[s4$ANEST== 1]='generale'
+s4$ANEST_lev[s4$ANEST== 2]='spinale'
+s4$ANEST_lev[s4$ANEST== 3]='peridurale'
+s4$ANEST_lev[s4$ANEST== 4]='plessica'
+s4$ANEST_lev[s4$ANEST== 5]='combinata'
+s4$ANEST_lev[s4$ANEST== 6]='sedazione'
+s4$ANEST_lev[s4$ANEST== 7]='locale assistita'
+s4$ANEST_lev[s4$ANEST== 8]='altro'
+```
+
+
+## DATA DECESSO 
+
+Data decesso presenta diverse ambiguità. Durante il caricamento del dataset come è successo per la variabile NASCITA, i valori vengono visualizzati come numeri.
+Sono presenti inoltre dei -1 e una frase 'SI é RIFIUTATA' che deve essere necessariamente eliminata.
+Dapprima quindi convertiamo questi dati con NA.
+Successivamente convertiamo in classe data i resanti utilizzando come data di origine il 1899-12-30.
+
+```{r}
+s4$`DATA DECESSO`
+class(s4$`DATA DECESSO`)
+s4$`DATA DECESSO` = ifelse(s4$`DATA DECESSO`==-1,NA,s4$`DATA DECESSO`)
+s4$`DATA DECESSO` = ifelse(s4$`DATA DECESSO`=='SI è RIFIUTATA',NA,s4$`DATA DECESSO`)
+
+s4$`DATA DECESSO` = as.numeric(s4$`DATA DECESSO`)
+(s4$`DATA DECESSO` = as.Date(x = s4$`DATA DECESSO`,origin = "1899-12-30", ))
+
+```
+
+
+
+# Exploratory Data Analysis
+
+
+### DATA FINE FU
+
+Per un analisi più approfondita abbiamo deciso di creare una variabile che sarà utile successivamente, denominata fine_fu, che indica il periodo in cui seguiremo i nostri pazienti
+dalla data di intervento fino ad un instante temporale definito. In questa variabile verranno inserite delle date. Per i pazienti che hanno una data di decesso, la data di decesso sarà la fine del follow-up, per i restanti terremo in considerazione il 31-12-2021.
+
+```{r}
+s4$fine_fu = ifelse(is.na(s4$`DATA DECESSO`),NA,s4$`DATA DECESSO`)
+s4$fine_fu =as.numeric(s4$fine_fu)
+s4$fine_fu =as.Date(s4$fine_fu,origin = "1970-01-01", )
+s4$fine_fu = ifelse(is.na(s4$fine_fu),as.Date("2021/12/31"),s4$fine_fu)
+s4$fine_fu =as.Date(s4$fine_fu,origin = "1970-01-01", )
+```
+
+Andremo poi a calcolare i giorni di follow-up, ovvero i giorni che un paziente rimane in osservazione all'interno dello studio.
+Costruiremo una nuova variabile tenendo in considerazione come data indice la data di intervento. 
+I giorni di follow up saranno dati dalla differenza tra la fine del follow-up e la data indice.
+
+```{r}
+s4$giorni_fu = as.numeric(difftime(s4$fine_fu, s4$DATINT, units = "days")) 
+```
+
+Osserveremo che vi sono valori negativi, ovvero si nota come vi sia un incongruenza tra la data di intervento e la data decesso di due pazienti.
+I due risultano essere deceduti prima della data di intervento, cosa non possibile. Procediamo dunque a creare un nuovo dataset non comprendendo questi pazienti
+in quanto potrebbero sorgere problematiche nel momento dell'analisi dei dati.
+
+```{r}
+s5 = s4
+s5 <- subset(s4, giorni_fu>=0) 
+```
+
+
+### BMI
+
+Avendo a disposizione i dati riguardanti il peso e l'altezza di ogni paziente, possiamo calcolare il **BMI (Body mass index) come peso/altezza^2**. 
+Per avere una più chiara interpretazione della variabile, classifichiamo i pazienti in:
+
+* Sottopeso --> BMI < 18.5
+* Normopeso --> 18.5 <= BMI < 25
+* Obeso     --> BMI >= 25 
+
+```{r}
+
+s5$BMI<-(s5$PESO)/((s5$ALTEZ/100)^2)
+
+s5$BMI_cla = ifelse(s5$BMI<18.5,'Sottopeso',ifelse(s5$BMI<25,'Normopeso','Obeso')) 
+
+```
+
+
+### ETA'
+
+Calcoliamo, inoltre, una delle variabili descrittive molto importanti, ovvero l'età. In questo caso abbiamo deciso di calcolarla alla data di intervento. 
+Anche per questo dato si è creata una variabile categorica in modo da classificare i valori in range che vanno da:
+
+* <60
+* 60-69
+* 70-79
+* 80+
+
+Si è notato che l'età dei pazienti al momento dell'intervento era elevata, infatti le uniche categorie che vengono visualizzate sono 70-79 e 80+.
+
+```{r}
+
+s5$eta = trunc((s5$NASCITA %--% s5$DATINT) / years(1))
+
+s5$eta_cla =  ifelse(s5$eta<60,'<60',
+                     ifelse(s5$eta<70,'60-69',
+                            ifelse(s5$eta<80,'70-79','80+')))
+
+table(s5$eta_cla)
+
+
+```
+
+### Tabelle descrittive
+
+```{r, warning=FALSE}
+#Tabella descrittiva
+label(s5$sex_lev)= "GENERE"
+label(s5$BMI) = "BMI"
+label(s5$eta) = "ETA'"
+label(s5$eta_cla) = "CLASSE ETA'"
+label(s5$BMI_cla) = "CLASSE BMI"
+label(s5$CCSCORE_cla) = "CLASSE CCSCORE"
+
+
+pvalue <- function(x, ...) {
+    # Construct vectors of data y, and groups (strata) g
+    y <- unlist(x)
+    g <- factor(rep(1:length(x), times=sapply(x, length)))
+    if (is.numeric(y)) {
+        # For numeric variables, perform a standard 2-sample t-test
+        p <- t.test(y ~ g)$p.value
+    } else {
+        # For categorical variables, perform a chi-squared test of independence
+        p <- chisq.test(table(y, g))$p.value
+    }
+    # Format the p-value, using an HTML entity for the less-than sign.
+    # The initial empty string places the output on the line below the variable label.
+    c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+table1(~ sex_lev + eta  + eta_cla + BMI + BMI_cla  + CCSCORE_cla  | sofa_class, data=s5, overall=F, extra.col=list('P-value'=pvalue), caption='TAB1, tabella descrittiva 1')
+```
+
+
+Nella TAB1 vediamo una descrizione delle variabili principali classificate in base al punteggio Sofa. Per le variabili categoriche vengono confrontate le numerosità entro gruppi e le percentuali,
+mentre per quelle numeriche si osserva media con la SD e mediana con il range di appartenenza. Come prima annotazione di può osservare la maggior presenza di pazienti con sofa basso. 
+La coorte di pazienti è prevalentemente di genere femminile, con un'età molto alta, in entrambe le categorie di sofa siamo sopra agli 80 anni e con un BMI medio sotto il 25 perciò normopeso.
+Osservando infine la variabile ccscore si nota come per la categoria sofa alto si definiscono pazienti con un comorbidity score medio/alto mentre nella categoria sofa basso si hanno il 43% di pazienti
+con ccscore basso. Da notare bene anche la colonna dei p-value che risultano non significativi al 5% per tutte le variabili tranne che per la classe ccscore. 
+
+
+```{r,  warning=FALSE}
+table1(~ CCSCORE_cla | sofa_class*sex_lev, data=s5,overall=F, extra.col=list('P-value'=pvalue), caption='TAB2, tabella descrittiva 2')
+
+```
+
+
+Siamo poi andati ad approfondire la distribuzione delle categorie del ccscore in relazione a quelle di genere e punteggio sofa. (TAB2)
+La numerosità maggiore la si osserva nel gruppo delle donne con sofa basso che è caratterizzata da un ccscore basso, mentre per le donne con sofa alto si denota circa un 54% avente un ccscore alto.
+Per gli uomini invece, seppur essendo in numero molto inferiore, hanno prevalentemente in entrambi i livelli di sofa, un ccscore medio, rispettivamente 75% per sofa basso e 60% per sofa alto.
+
+
+### Missing Value
+
+SI vuole mostrare ora per ogni variabile, la percentuale dei Missing Value:
+
+```{r, fig.show='hide'}
+
+pl = plot_missing(s5,
+            group = list(Good = 0.1, Bad = 1),
+             missing_only = TRUE,
+             geom_label_args = list("size" = 3, "label.padding" = unit(0.1, "lines"))) 
+ti = ggtitle("Missing Value ") 
+ad = theme(plot.title = element_text(hjust = 0.5)) 
+leg = scale_fill_discrete(limits = c("bad", "ok", "good"))
+
+```
+```{r}
+pl+ti+ad +theme(panel.background = element_rect(fill = "white" ))            
+
+```
+
+
+Questa osservazione la si può fare per individuare quali variabili, in fase di analisi, potranno portare a distorsioni nei risultati per dati mancanti. 
+Ovviamente la data decesso è quella che contiene maggiori NA in quanto non tutti i pazienti sono deceduti. Infatti questa tecnica è più utile in variabili conteggio 
+dove è necessario andare ad indagare più approfonditamente i risultati.
+
+
+#### Barplot classe età-genere
+
+```{r}
+ 
+attach(s5)
+
+(table1<-table(s5$sex_lev,s5$eta_cla))
+
+x1<-barplot((table1), col=c('plum1','lightskyblue'), beside=T,
+        main="Distribuzione di genere entro classi di età",
+        legend.text=c("donne","uomini"),
+        names.arg=c('70-79', '80+'),ylab = 'N pazienti')
+text(x=x1, y=table1/2, labels = table1)
+```
+
+#### Barplot classe bmi-sesso
+
+```{r}
+ 
+attach(s5)
+
+(table2<-table(s5$sex_lev,s5$BMI_cla))
+
+x2<-barplot((table2), col=c('plum1','lightskyblue'), beside=T,
+        main="Distribuzione di genere entro classi di BMI",
+        legend.text=c("donne","uomini"),
+        names.arg=c('Normopeso', 'Obeso','Sottopeso'),ylab = 'N pazienti')
+text(x=x2, y=(table2/2)+1, labels = table2)
+```
+
+#### Barplot classe Sofa-sesso
+
+```{r}
+ 
+attach(s5)
+
+(table3<-table(s5$sex_lev,s5$sofa_class))
+
+x3<-barplot((table3), col=c('plum1','lightskyblue'), beside=T,
+        main="Distribuzione di genere entro classi di Sofa",
+        legend.text=c("donne","uomini"),
+        names.arg=c('Sofa Alto','Sofa Basso'),ylab = 'N pazienti')
+text(x=x3, y=(table3/2)+1, labels = table3)
+```
+
+#### Barplot CCSCORE-sesso
+```{r}
+(table4<-table(s5$sex_lev, s5$CCSCORE_cla))
+
+x4<-barplot((table4), col=c('plum1','lightskyblue'), beside=T,
+        main="Distribuzione di genere entro ccscore",
+        legend.text=c("donne","uomini"),
+        names.arg=c('cccscore alto','ccscore basso','ccscore medio'),ylab = 'N pazienti')
+text(x=x4, y=(table4/2), labels = table4)
+```
+
+### Violin plot di sofa per il punteggio ccscore
+```{r}
+
+
+
+vioplot(s5$CCSCORE~s5$sofa_class,
+data=s5,
+method = "jitter",
+main="Violin plot per ogni categoria di SOFA",
+xlab = ' ',
+ylab="Charlson Comorbidity Score ",
+col="orange",
+border="brown"
+)
+```
+
+
+```{r warning=FALSE}
+
+#funzione empirica cumulata dell'età divisa per sesso
+sofaing_num = as.numeric(s5$SOFAING)
+a <- ggplot(s5, aes(x = sofaing_num))+theme(panel.background = element_rect(fill = "white" ))+ ggtitle("Plot of length \n by dose") + ylab("età cumulata") + xlab("Sofa") 
+
+#funzione empirica cumulata
+pl =a + stat_ecdf(aes(color = sex_lev,linetype = sex_lev),
+              geom = "step", size = 1.5) +
+  scale_color_manual(values = c("#00AFBB", "#E7B800"))+
+  labs(y = "f(eta)")+theme(panel.background = element_rect(fill = "white" ))
+
+
+
+bxp <- pl + labs(title = "Cumulate età-Sofa",
+              subtitle = "Frequenze cumulate punteggio sofa per età e genere",
+              x = "Punteggio Sofa", y = "Frequenza cumulata età")
+bxp
+
+```
+
+
+
+### Matrice di correlazione 
+
+Un'analisi esplorativa molto importante è quella di verificare la correlazione tra le variabili. Questo è possibile grazie alla matrice di correlazione.
+
+
+```{r, fig.width=12, fig.height=10, warning=FALSE}
+#da rivedere
+s123<-s5[,c("SOFAING","CCSCORE","eta","BMI","ALB","VITD","HBING","CALC","MMSE")]# togliamo PESO e ALTEZZA poichè BMI viene calcolato da essi
+#View(s123)
+
+s123$SOFAING<-as.numeric(s123$SOFAING)
+s123$CCSCORE<-as.numeric(s123$CCSCORE)
+s123$eta<-as.numeric(s123$eta)
+s123$BMI<-as.numeric(s123$BMI)
+
+corr<-cor(na.omit(s123))
+
+pairs.panels(s123, ellipses = F, lm=T,bg = c('blue','pink')[s5$SEX]
+             ,pch= 21,  stars=TRUE, main = 'Etha')
+
+
+ggcorrplot(na.omit(corr), p.mat = cor_pmat(s123), hc.order = TRUE,
+           type = "lower",
+           color = c("#FC4E07", "white", "#00AFBB"),
+           outline.col = "white", lab = TRUE, ggtheme=custom_theme(), title = 'Correlation Matrix')
+
+```
+
+
+Osservando le matrici di correlazione, tenendo in considerazione solo le variabili maggiormente significative per questo tipo di analisi, si possono osservare correlazioni positive e negative.
+Il confronto più importante è, a nostro avviso, quello tra il punteggio sofa (SOFAING) e il CCSCORE. Le due variabili hanno un coefficiente di correlazione debolmente positivo (forse per la bassa numerosità del campione)
+ma significativo. QUesto definisce che per esempio, all'aumentare di una unità del ccscore, il sofaing aumenta di circa il 26%. Quindi se un paziente ha più malattie in concomitanza si può verificare un aumento del rischio di disfunzione di organi del 26%.
+
+
+
+### ANALISI SOPRAVVIVENZA
+
+Una analisi possibile che si può effettuare con i dati a disposizione è l'analisi della sopravvivenza.
+Come primo passo andremo a creare una variabile 'EVENTO' in cui verrà assegnato 1 ai pazienti deceduti e 0 agli altri.
+Modificheremo anche il tempo del follow-up da giorni in anni.
+
+Quello che cercheremo di fare è dimostrare che con un punteggio sofa alto, come mostrato in letteratura, aumenta il rischio di mortalità.
+La prima verifica che si può fare è tramite la curva di Kaplan-Meier.
+
+```{r}
+
+s5$EVENTO<-ifelse(is.na(s5$`DATA DECESSO`), 0,1 )
+#table(s5$EVENTO)
+
+
+s6 <- mutate(s5, all = EVENTO != "0")
+#table(s6$all)
+
+s6$anni_fu<- s6$giorni_fu/365
+#View(s6)
+
+
+fit_km <- survfit(Surv(anni_fu, all) ~ sofa_class, data = s6)
+
+dat_km <- fortify(fit_km)
+
+ggsurvplot(fit_km, title='Curva di sopravvivenza', ggtheme=custom_theme(), 
+           risk.table = TRUE, xlab = "Time (years)", censor = F, xlim = c(0,9), 
+           legend = c(0.8, 0.2),legend.labs = c('Sofa Alto','Sofa Basso'), break.x.by = 1)
+
+
+```
+
+
+Dal grafico si osserva una netta riduzione della curva riferita ai soggetti con sofa alto. Addirittura subito dopo un anno, il 50% dei pazienti aventi punteggio sofa alto all'inizio dello studio erano deceduti.
+Notiamo infatti 18 pazienti al tempo 0 e 10 rimasti in studio all'inizio del primo anno.Al contrario di quelli con sofa basso che hanno una riduzione di circa il 10%. 
+Questa analisi, attraverso i dati disponibili, trova però delle difficoltà data la bassa numerosità di soggetti inclusi nello studio e il periodo di osservazione stabilito a priori tenendo in considerazione il periodo
+temporale in cui viene svolta questa relazione. 
+Siamo fiduciosi però del fatto di osservare un risultato simile anche in database più numerosi.
+
+
+### MODELLO DI COX
+
+Tenendo sempre in considerazione la bassa numerosità del dataset, successivamente alla curva di Kaplan-Meier è possibile definire il modello di Cox.
+Dapprima si determina il modello grezzo tenendo in considerazione solo la variabile di classificazione del sofa.
+
+```{r, warning=FALSE, message=FALSE}
+coxph2 <- coxph(Surv(giorni_fu,EVENTO)~sofa_class, data=s5)
+summary(coxph2)
+
+```
+
+Da questo primo modello si osserva come la variabile sofa basso sia molto significativa e abbia un effetto protettivo sulla mortalità rispetto alla variabile di riferimento sofa alto.
+Si osserva infatti un HR dello 0.109 con un intervallo di confidenza (0.029,0.405).
+
+
+
+Considerando invece le altre covariate il modello diventa il seguente:
+
+```{r, warning=FALSE, message=FALSE}
+coxph1 <- coxph(Surv(giorni_fu,EVENTO)~sofa_class+eta_cla+BMI_cla+CCSCORE_cla, data=s5)
+summary(coxph1)
+```
+
+La variabile sofa basso è ancora significativa. Il coefficiente passa da -2.2137 a -2.054 e l'HR da 0.109 a 0.128 con un IC (0.029,0.567).
+Si verifica perciò sempre l'effetto protettivo del sofa basso rispetto al sofa alto sulla mortalità come evidenziato anche dalla curva KM. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
